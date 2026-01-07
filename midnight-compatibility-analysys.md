@@ -36,6 +36,9 @@ The Midnight SDK packages are designed primarily for **Node.js environments**. T
 13. [Alternatives to WASM: Analysis](#13-alternatives-to-wasm-analysis)
 14. [Future Considerations](#14-future-considerations)
 15. [Mobile Platform Incompatibility and Potential Fixes](#15-mobile-platform-incompatibility-and-potential-fixes)
+16. [Active Implementation: ledger-uniffi (Native FFI for Mobile)](#16-active-implementation-ledger-uniffi-native-ffi-for-mobile)
+17. [Alternative Approach: Polygen (WASM AOT Compilation)](#17-alternative-approach-polygen-wasm-aot-compilation)
+18. [Alternative Approach: Manual Rust FFI (Direct Native Modules)](#18-alternative-approach-manual-rust-ffi-direct-native-modules)
 
 ---
 
@@ -404,7 +407,7 @@ The Midnight blockchain implements a sophisticated zero-knowledge proof system t
 
 ### Architectural Decision from Midnight
 
-From the Midnight Architecture documentation:
+From Midnight Architecture decissions:
 
 > "Ledger Libs are being implemented in Rust language, but expose a TypeScript interface that can be used in Node.js and browsers through targeting WASM."
 
@@ -551,9 +554,7 @@ WebCrypto only supports P-256, P-384, P-521, and Ed25519. The curves required by
 
 ## 13. Alternatives to WASM: Analysis
 
-### Alternatives Evaluated by Midnight Team
-
-The Midnight architecture documents (ADR 0004, Proposal 0020) evaluated several alternatives:
+### Alternatives Evaluated 
 
 #### 1. FFI (Foreign Function Interface)
 
@@ -630,8 +631,6 @@ The Midnight architecture documents (ADR 0004, Proposal 0020) evaluated several 
 ```
 
 ### WASM Performance Characteristics
-
-From Midnight's Proposal 0020 (Local Proving Modalities):
 
 > "Generating proofs in a default, single-threaded setup is unacceptably slow - although successful, it took minutes to generate a Zswap spend proof. On the other hand - enabling WASM to run in a multithreaded setup (by leveraging Web Workers, shared array buffers and `wasm-bindgen-rayon` crate) brings performance to noticeably slower than native, but somewhat acceptable levels (usually 20-30s for a Zswap spend proof on a M1 Max/10 core machine)."
 
@@ -1054,14 +1053,503 @@ The current WASM-based SDK architecture is fundamentally incompatible with iOS n
 | Full Native FFI | Full | Excellent | High |
 | GPU Acceleration | Full | Excellent | Very High |
 
+### Active Implementation: ledger-uniffi
+
+| Component | Status |
+|-----------|--------|
+| UniFFI Framework | ✅ UniFFI 0.29 integrated |
+| Android Build (ARM64) | ✅ Working |
+| iOS Build (Simulator) | ✅ Working |
+| React Native Module | ✅ Scaffolding complete |
+| Demo App | ✅ End-to-end working |
+| API Implementation | ⚠️ Partial |
+| Test Suite | ❌ Pending |
+| Documentation | ❌ Pending |
+
+### Alternative: Polygen (WASM AOT)
+
+| Aspect | Status |
+|--------|--------|
+| Approach | WASM → C → Native (AOT) |
+| iOS JIT bypass | ✅ Solved |
+| Thread support | ❌ Not available |
+| Best for | Non-proving operations |
+| Limitation | Proof generation would be slow (minutes) |
+
+### Alternative: Manual Rust FFI
+
+| Aspect | Status |
+|--------|--------|
+| Approach | Rust → JNI/Swift → Native |
+| Binding generation | Manual (JNI + Swift code) |
+| Control | Maximum flexibility |
+| Boilerplate | Significant |
+| Best for | Few functions, custom memory management |
+| Trade-off | More effort, fewer dependencies |
+
 ---
 
-*Last updated: January 2025*
+---
 
-*Based on analysis of:*
-- *midnight-architecture repository*
-- *midnight-ledger repository*
-- *Midnight SDK npm packages*
-- *MoPro (Mobile Prover) framework documentation*
-- *React Native WASM compatibility research*
-- *iOS JavaScriptCore JIT restriction documentation*
+## 16. Active Implementation: ledger-uniffi (Native FFI for Mobile)
+
+https://github.com/midnightntwrk/midnight-ledger/pull/42
+
+This section documents active work to implement the **Native FFI Compilation** solution described in Section 15 ("Potential Fix #1"). The `ledger-uniffi` project provides UniFFI bindings for the Midnight Ledger crate, enabling native mobile integration without WASM dependencies.
+
+### Project Overview
+
+| Attribute | Details |
+|-----------|---------|
+| **Goal** | Provide a mobile-friendly FFI surface for the Rust ledger library |
+| **Approach** | Mozilla UniFFI for type-safe bindings to iOS (Swift) and Android (Kotlin) |
+| **Analogy** | Conceptually similar to `ledger-wasm` (which targets Web via WASM), but targeting mobile (React Native) instead |
+| **Status** | Experimental and work-in-progress |
+
+### Project Structure
+
+```
+ledger-uniffi/
+├── src/                          # Rust UniFFI wrapper code
+│   ├── lib.rs                    # Main exports and UniFFI scaffolding
+│   ├── types.rs                  # Type definitions
+│   ├── crypto.rs                 # Cryptographic operations
+│   ├── tx.rs                     # Transaction handling
+│   ├── intent.rs                 # Intent management
+│   ├── zswap_*.rs                # ZSwap-related functionality
+│   ├── conversions.rs            # Type conversions between FFI and internal types
+│   ├── errors.rs                 # Error handling
+│   └── objects/                  # Object wrappers
+│       ├── transaction.rs
+│       ├── proof.rs
+│       ├── token_types.rs
+│       ├── parameters.rs
+│       ├── cost_model.rs
+│       └── dust.rs
+├── react-native-ledger-ffi/      # React Native bridge module
+│   ├── android/                  # Android native module (Kotlin)
+│   └── ios/                      # iOS native module (Swift)
+├── rn-demo-app/                  # Sample React Native demonstration app
+├── run.sh                        # Automated build script for both platforms
+└── Cargo.toml                    # Rust dependencies
+```
+
+### Exposed API Functions
+
+The UniFFI bindings expose the following functions to mobile platforms:
+
+#### Token Operations
+| Function | Description |
+|----------|-------------|
+| `native_token()` | Returns the native token type |
+| `fee_token()` | Returns the fee (dust) token type |
+| `shielded_token()` | Returns the shielded token type |
+| `unshielded_token()` | Returns the unshielded token type |
+
+#### Coin Operations
+| Function | Description |
+|----------|-------------|
+| `create_shielded_coin_info(token_type, value)` | Creates shielded coin info with specified type and value |
+| `coin_nullifier(coin_info, coin_secret_key)` | Computes coin nullifier for spending |
+| `coin_commitment(coin_info, coin_public_key)` | Computes coin commitment |
+| `sample_coin_public_key()` | Generates a random coin public key |
+| `sample_encryption_public_key()` | Generates a random encryption public key |
+
+#### Address Operations
+| Function | Description |
+|----------|-------------|
+| `address_from_key(key)` | Derives user address from verifying key |
+
+#### Proof Operations
+| Function | Description |
+|----------|-------------|
+| `create_proving_payload(preimage, overwrite_binding_input, key_material)` | Creates payload for proof generation |
+| `create_check_payload(preimage, ir)` | Creates payload for proof checking |
+| `parse_check_result(result)` | Parses proof check results |
+
+### Build Pipeline
+
+The `run.sh` script automates the complete build process:
+
+```
+Rust Source Code
+    ↓
+┌───────────────────────────────────────────────────────────────┐
+│ Android Build                                                  │
+│   Target: aarch64-linux-android                                │
+│   Output: libledger_uniffi.so                                  │
+│   Bindings: Kotlin (UniFFI generated)                          │
+└───────────────────────────────────────────────────────────────┘
+    ↓
+┌───────────────────────────────────────────────────────────────┐
+│ iOS Build                                                      │
+│   Target: aarch64-apple-ios-sim                                │
+│   Output: libledger_uniffi.a                                   │
+│   Bindings: Swift (UniFFI generated)                           │
+└───────────────────────────────────────────────────────────────┘
+    ↓
+React Native Module (react-native-ledger-ffi)
+    ↓
+Demo App (rn-demo-app)
+```
+
+#### Quick Start Commands
+
+```bash
+# Build for both platforms
+./run.sh
+
+# Build only for Android
+./run.sh android
+
+# Build only for iOS
+./run.sh ios
+```
+
+### Current Implementation State
+
+#### What Works
+- End-to-end data flow from Rust library → UniFFI bindings → React Native module → mobile UI
+- Basic function calls (e.g., `hello()` greeting string) surfaced and displayed in demo app
+- Build pipeline for both Android and iOS platforms
+
+#### What's Incomplete
+| Component | Status |
+|-----------|--------|
+| Rust wrapper implementations | Partial - some functions are placeholders |
+| Public API design | Not finalized - will change |
+| Data types exposed via FFI | Not finalized |
+| Test suite | None - unit/integration/proptests pending |
+| Transaction parsing | Not yet implemented |
+| Error handling | Partial coverage |
+
+### Dependencies
+
+The UniFFI bindings depend on the core Midnight Ledger crates:
+
+```toml
+[dependencies]
+uniffi = "0.29"
+serialize = { path = "../serialize", package = "midnight-serialize" }
+ledger = { path = "../ledger", package = "midnight-ledger" }
+base-crypto = { path = "../base-crypto", package = "midnight-base-crypto" }
+coin-structure = { path = "../coin-structure", package = "midnight-coin-structure" }
+transient-crypto = { path = "../transient-crypto", package = "midnight-transient-crypto" }
+```
+
+### Planned Work
+
+1. **Finalize Native Module API**
+   - Complete function implementations
+   - Stabilize data types for FFI boundary
+   - Add comprehensive error handling
+
+2. **Testing**
+   - Rust-side unit and integration tests
+   - React Native module tests (JS/TS)
+   - End-to-end paths with demo app
+
+3. **Documentation**
+   - API reference documentation
+   - Integration guides for iOS and Android
+
+### Relation to Section 15 Solutions
+
+This implementation directly addresses the **Native FFI Compilation** approach (Potential Fix #1):
+
+| Aspect | Planned (Section 15) | Implemented (ledger-uniffi) |
+|--------|----------------------|----------------------------|
+| FFI Framework | UniFFI/swift-bridge | UniFFI 0.29 |
+| iOS Target | `aarch64-apple-ios` | `aarch64-apple-ios-sim` |
+| Android Targets | ARM64, ARM32, x86_64 | ARM64 (`aarch64-linux-android`) |
+| Binding Languages | Swift, Kotlin | Swift, Kotlin |
+| React Native Integration | TypeScript bridge | `react-native-ledger-ffi` module |
+
+### Bypassing WASM Limitations
+
+By compiling Rust directly to native libraries, this approach:
+
+1. **Avoids iOS JIT restrictions** - Native code runs without WASM/JavaScript
+2. **Avoids React Native engine limitations** - No dependency on Hermes or JSC WASM support
+3. **Enables full performance** - Native execution speed without interpreter overhead
+4. **Maintains privacy** - All cryptographic operations stay on-device
+
+---
+
+## 17. Alternative Approach: Polygen (WASM AOT Compilation)
+
+Polygen is a WebAssembly toolkit for React Native developed by Callstack that uses **Ahead-of-Time (AOT) compilation** instead of JIT. This approach offers an alternative path to running WASM modules on mobile platforms.
+
+### How Polygen Works
+
+```
+WASM Module (.wasm)
+    ↓ wasm2c (WABT toolkit)
+C Source Code (.c/.h)
+    ↓ Native compiler (Xcode/NDK)
+Native Library (.a/.so)
+    ↓ JSI bridge
+React Native JavaScript
+```
+
+Polygen converts WASM modules to C code at **build time** using the `wasm2c` tool from the WebAssembly Binary Toolkit (WABT). The generated C code is then compiled into native iOS/Android libraries and accessed via React Native's JSI (JavaScript Interface).
+
+### Key Benefits
+
+| Benefit | Description |
+|---------|-------------|
+| **Bypasses iOS JIT prohibition** | WASM is pre-compiled to native C—no runtime JIT needed |
+| **Standard WebAssembly API** | Provides a polyfill matching the WebAssembly JavaScript API |
+| **Works on both platforms** | Same AOT approach for iOS and Android |
+| **Near-native performance** | Compiled C code executes at native speed |
+
+### Feature Support Status
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| WebAssembly 2.0 | ✅ Supported | Core specification |
+| Exceptions | ❌ Not supported | |
+| **Threads** | ❌ Not supported | Critical limitation for proving |
+| Garbage Collection | ❌ Not supported | |
+| Multiple Memories | 🟡 Partial | |
+| Mutable Globals | 🟡 Partial | |
+
+### Thread Limitation Impact
+
+The lack of thread support in Polygen has significant implications for ZK proof generation. From the Midnight architecture documentation:
+
+> "Generating proofs in a default, single-threaded setup is unacceptably slow... it took minutes to generate a Zswap spend proof. On the other hand - enabling WASM to run in a multithreaded setup... brings performance to... usually 20-30s."
+
+Without thread support, proof generation via Polygen would take **minutes rather than seconds**. However, many ledger operations do not require multi-threading and could benefit from this approach.
+
+### Applicability to Midnight Operations
+
+| Operation Type | Polygen Viability | Rationale |
+|----------------|-------------------|-----------|
+| Proof generation | ⚠️ Limited | Single-threaded execution would be significantly slower |
+| Proof verification | ✅ Viable | Verification is less compute-intensive |
+| Transaction building | ✅ Viable | Does not require threading |
+| Address operations | ✅ Viable | Simple cryptographic operations |
+| Coin operations | ✅ Viable | Commitment/nullifier computation |
+
+### Comparison: Polygen vs ledger-uniffi
+
+| Aspect | Polygen | ledger-uniffi |
+|--------|---------|---------------|
+| **Approach** | WASM → C → Native | Rust → Native (FFI) |
+| **Thread support** | ❌ No | ✅ Yes (native threads) |
+| **API style** | WebAssembly API | Custom FFI API |
+| **Code reuse** | Uses existing WASM modules | Requires FFI wrapper code |
+| **Build complexity** | Moderate | Higher |
+| **Performance** | Near-native | Native |
+| **Status** | Active development | Experimental |
+
+### Potential Hybrid Strategy
+
+Polygen could complement the ledger-uniffi approach:
+
+1. **ledger-uniffi** for core cryptographic operations requiring native threading
+2. **Polygen** for WASM modules where single-threaded execution is acceptable (e.g., `onchain-runtime-wasm`)
+3. **Server-side proving** as an option for heavy proof generation workloads
+
+### Integration Example
+
+```javascript
+// polygen.config.mjs
+import { localModule, polygenConfig } from '@callstack/polygen-config';
+
+export default polygenConfig({
+  modules: [
+    localModule('node_modules/@midnight-ntwrk/onchain-runtime-v1/midnight_onchain_runtime_wasm_bg.wasm'),
+  ],
+});
+```
+
+```javascript
+// App.js
+import '@callstack/polygen/polyfill';
+
+// Standard WebAssembly API now works in React Native
+const module = await WebAssembly.compile(wasmBuffer);
+const instance = await WebAssembly.instantiate(module, imports);
+```
+
+### Conclusion
+
+Polygen offers a viable path for running certain WASM modules on mobile without JIT, but its lack of thread support makes it **complementary rather than a replacement** for the native FFI approach. For Midnight's ZK proving operations, ledger-uniffi remains the preferred solution due to its support for native multi-threading.
+
+---
+
+## 18. Alternative Approach: Manual Rust FFI (Direct Native Modules)
+
+https://rust-dd.com/post/building-a-rust-native-module-for-react-native-on-ios-and-android
+
+An alternative to UniFFI's automated binding generation is building Rust native modules manually using direct FFI. This approach provides maximum control over the native interface at the cost of more boilerplate code.
+
+### How It Works
+
+```
+Rust Library (staticlib + cdylib)
+    ↓
+┌─────────────────────────────────────────────────────────────┐
+│ iOS                          │ Android                      │
+│ ─────                        │ ───────                      │
+│ .a static library            │ .so shared library           │
+│ C header file                │ JNI bindings in Rust         │
+│ Swift/ObjC bridge code       │ Kotlin external declarations │
+│ CocoaPods integration        │ jniLibs directory            │
+└─────────────────────────────────────────────────────────────┘
+    ↓
+React Native Module (Expo or bare)
+    ↓
+JavaScript API
+```
+
+### Rust Library Configuration
+
+```toml
+# Cargo.toml
+[lib]
+crate-type = [
+    "staticlib",  # for iOS (.a file)
+    "cdylib"      # for Android (.so file)
+]
+```
+
+### Build Targets
+
+| Platform | Rust Target | Output | Use Case |
+|----------|-------------|--------|----------|
+| iOS Device | `aarch64-apple-ios` | `.a` | Physical iPhones/iPads |
+| iOS Simulator | `aarch64-apple-ios-sim` | `.a` | Apple Silicon simulators |
+| Android ARM64 | `aarch64-linux-android` | `.so` | Modern Android devices |
+| Android ARM32 | `armv7-linux-androideabi` | `.so` | Older Android devices |
+| Android x86_64 | `x86_64-linux-android` | `.so` | Android emulators |
+| Android x86 | `i686-linux-android` | `.so` | Older emulators |
+
+### Android JNI Bindings
+
+Manual JNI bindings must be written for each exposed function:
+
+```rust
+#[cfg(target_os = "android")]
+pub mod android {
+    use jni::objects::JClass;
+    use jni::sys::jint;
+    use jni::JNIEnv;
+
+    #[no_mangle]
+    pub unsafe extern "C" fn Java_com_midnight_ledger_LedgerModule_coinNullifier(
+        env: JNIEnv,
+        _class: JClass,
+        coin_info: jbyteArray,
+        secret_key: jbyteArray,
+    ) -> jbyteArray {
+        // Manual conversion and function call
+    }
+}
+```
+
+### iOS Swift Bridge
+
+Swift code must declare and call C functions:
+
+```swift
+// Bridge header declares C functions
+// rust_ledger.h
+int32_t rust_add(int32_t a, int32_t b);
+uint8_t* coin_nullifier(const uint8_t* coin_info, const uint8_t* secret_key);
+
+// Swift module calls them
+@objc(LedgerModule)
+class LedgerModule: NSObject {
+    @objc func coinNullifier(_ coinInfo: Data, secretKey: Data,
+                              resolver: @escaping RCTPromiseResolveBlock,
+                              rejecter: @escaping RCTPromiseRejectBlock) {
+        // Call Rust function and handle result
+    }
+}
+```
+
+### Kotlin Integration
+
+```kotlin
+class LedgerModule : Module() {
+    companion object {
+        init {
+            System.loadLibrary("midnight_ledger")
+        }
+    }
+
+    // Declare external functions matching JNI exports
+    external fun coinNullifier(coinInfo: ByteArray, secretKey: ByteArray): ByteArray
+}
+```
+
+### Comparison: Manual FFI vs UniFFI
+
+| Aspect | Manual FFI | UniFFI (ledger-uniffi) |
+|--------|------------|------------------------|
+| **Binding generation** | Manual JNI + Swift code | Auto-generated from Rust |
+| **Type safety** | Manual conversion | Automatic type mapping |
+| **Maintenance** | High - update bindings for each change | Low - regenerate bindings |
+| **Control** | Maximum flexibility | Constrained by UniFFI patterns |
+| **Boilerplate** | Significant | Minimal |
+| **Error handling** | Manual propagation | Automatic Result mapping |
+| **Complex types** | Manual serialization | Built-in support |
+
+### When to Use Manual FFI
+
+| Scenario | Recommendation |
+|----------|----------------|
+| Few simple functions | ✅ Manual FFI is straightforward |
+| Many functions with complex types | ❌ UniFFI saves significant effort |
+| Need custom memory management | ✅ Manual FFI provides control |
+| Rapid iteration during development | ❌ UniFFI regenerates bindings quickly |
+| Integration with existing C API | ✅ Manual FFI maps directly |
+
+### Project Structure
+
+```
+rust-module/
+├── rust_backend/
+│   ├── Cargo.toml
+│   └── src/
+│       └── lib.rs              # Rust implementation + JNI bindings
+├── ios/
+│   ├── rust/
+│   │   ├── librust_backend.a   # Compiled static library
+│   │   └── rust_backend.h      # C header
+│   └── LedgerModule.swift      # Swift bridge
+├── android/
+│   └── src/main/
+│       ├── jniLibs/
+│       │   ├── arm64-v8a/
+│       │   │   └── librust_backend.so
+│       │   ├── armeabi-v7a/
+│       │   │   └── librust_backend.so
+│       │   └── x86_64/
+│       │       └── librust_backend.so
+│       └── kotlin/
+│           └── LedgerModule.kt  # Kotlin declarations
+└── src/
+    └── index.ts                 # JavaScript API
+```
+
+### Advantages for Midnight
+
+1. **No UniFFI dependency** - Fewer build dependencies
+2. **Direct control** - Custom memory management for large cryptographic structures
+3. **Optimized serialization** - Can use binary formats tuned for specific types
+4. **Gradual adoption** - Can expose functions incrementally
+
+### Disadvantages for Midnight
+
+1. **Significant boilerplate** - Each function needs JNI + Swift + Kotlin code
+2. **Error-prone** - Manual type conversions can introduce bugs
+3. **Maintenance burden** - API changes require updating multiple files
+4. **Complex types** - Structs like `ProofPreimage` require manual serialization
+
+### Conclusion
+
+Manual Rust FFI provides maximum control but requires significantly more development effort than UniFFI. For a large API surface like the Midnight Ledger (with dozens of functions and complex types), **UniFFI's automated approach is more practical**. Manual FFI may be appropriate for performance-critical code paths where custom memory management is beneficial.
